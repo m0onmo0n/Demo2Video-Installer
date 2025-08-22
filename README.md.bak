@@ -1,0 +1,76 @@
+# CS Demo Processor
+
+This program automates the process of downloading a Counter-Strike 2 demo, analyzing it, recording highlights of a specified player, and uploading the resulting video to YouTube. It runs as a continuous service with a web interface for queuing jobs, making it a complete, hands-free pipeline.
+
+This project uses the command-line tools provided by a modified version of **CS Demo Manager** to handle the demo analysis and launch the game for recording.
+
+## Installation (Recommended for New Users)
+
+This method provides a guided setup for all necessary components.
+
+### 1. Prerequisites
+
+* **Python 3.7+**: Install from [python.org](https://www.python.org/downloads/). **Important:** During installation, check the box that says **"Add Python to PATH"**.
+
+* **Node.js**: Install from [nodejs.org](https://nodejs.org/).
+
+* **OBS Studio**: Install from [obsproject.com](https://obsproject.com/).
+
+* **PostgreSQL**: Install and set up a PostgreSQL database. You will need the password for your `postgres` user.
+
+### 2. Project Setup
+
+1. **Download This Project**: Download this repository as a ZIP file and extract it.
+
+2. **Download the CSDM Fork**: Download the required **modified CS Demo Manager project**. *(Note: You should replace this text with a link to your forked GitHub repository).*
+
+3. **Combine Folders**: Create a new folder named `csdm-fork` inside this project's main folder. Place all the files from the modified CSDM project into this `csdm-fork` folder.
+
+### 3. Run the Installer
+
+Simply double-click the `install.bat` file. This will:
+
+* Install all Python dependencies.
+
+* Install all Node.js dependencies for the CSDM fork.
+
+* Launch an interactive setup guide that will ask you for your database password and OBS output folder, then automatically create all the necessary configuration files (`config.ini` and `settings.json`).
+
+### 4. Final Steps
+
+After the installer finishes, you only have two steps left:
+
+1. **Authorize YouTube**: Run `python setup_youtube_auth.py` from your terminal.
+
+2. **Run the Application**: Follow the "How to Run" section below.
+
+## How to Run
+
+1. **Start the CSDM Dev Server**:
+
+   * Open a terminal and navigate to the `csdm-fork` folder inside this project.
+
+   * Run the command: `node scripts/develop-cli.mjs`
+
+   * **Leave this terminal running in the background.**
+
+2. **Start OBS Studio**:
+
+   * Open OBS and leave it running in the background.
+
+3. **Start the Main Program**:
+
+   * Open a **second terminal** and navigate to this project's main folder.
+
+   * Run the main script:
+
+     ```
+     python main.py
+     
+     ```
+
+4. **Access the Web Interface**:
+
+   * Open your web browser and go to `http://localhost:5001`.
+
+   * You can now start adding demos to the queue.
