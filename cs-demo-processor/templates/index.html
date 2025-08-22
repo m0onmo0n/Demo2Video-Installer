@@ -1,0 +1,371 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CS Demo Processor</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+    <div class="container">
+        <h1>CS Demo Processor</h1>
+
+        <!-- Flash Messages section has been removed -->
+
+        <div class="status-box">
+            <h2>Current Status: <span id="current-status">Idle</span></h2>
+            <p><strong>Suspect:</strong> <span id="current-suspect">N/A</span></p>
+            <p><strong>Step:</strong> <span id="current-step">Waiting for a new demo...</span></p>
+        </div>
+
+        <div class="grid-container">
+            <div class="form-container">
+                <h2>Add New Demo to Queue</h2>
+                <form id="demo-form">
+                    <input type="text" id="share_code" name="share_code" placeholder="Enter Steam Run Link or Share Code" required>
+                    <input type="text" id="suspect_steam_id" name="suspect_steam_id" placeholder="Enter Suspect's Steam64 ID" required>
+                    <input type="text" id="submitted_by" name="submitted_by" placeholder="Your Name" required>
+                    <button type="submit">Add to Queue</button>
+                </form>
+                <p id="form-message"></p>
+            </div>
+
+            <div class="queue-container">
+                <h2>Processing Queue (<span id="queue-count">0</span>)</h2>
+                <ul id="queue-list">
+                    <!-- Queue items will be added here by JavaScript -->
+                </ul>
+            </div>
+        </div>
+
+        <div class="results-container">
+            <h2>Completed Jobs</h2>
+            <table id="results-table">
+                <thead>
+                    <tr>
+                        <th>Suspect Steam64 ID</th>
+                        <th>Share Code or Demo Link</th>
+                        <th>Submitted By</th>
+                        <th>Task Status</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody id="results-body">
+                    <!-- Results will be added here -->
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- Video Output Modal -->
+    <div id="video-modal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3 id="modal-title">Video Output</h3>
+                <span class="close" onclick="closeModal()">&times;</span>
+            </div>
+            <div id="modal-video-content" class="modal-body">
+                <!-- Video content will be inserted here -->
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Function to fetch and update status from the server
+        async function updateStatus() {
+            try {
+                const response = await fetch('/status');
+                const data = await response.json();
+
+                // Update current job status
+                document.getElementById('current-status').textContent = data.current_job.status;
+                document.getElementById('current-suspect').textContent = data.current_job.suspect || 'N/A';
+                document.getElementById('current-step').textContent = data.current_job.step;
+
+                // Update queue
+                const queueList = document.getElementById('queue-list');
+                const queueCount = document.getElementById('queue-count');
+                queueList.innerHTML = ''; // Clear the list
+                queueCount.textContent = data.queue.length;
+
+                if (data.queue.length === 0) {
+                    queueList.innerHTML = '<li>The queue is empty.</li>';
+                } else {
+                    data.queue.forEach(job => {
+                        const li = document.createElement('li');
+                        li.textContent = `Suspect: ${job.suspect_steam_id} (Code: ${job.share_code.substring(0, 20)}...)`;
+                        queueList.appendChild(li);
+                    });
+                }
+
+                // Update results table
+                const resultsBody = document.getElementById('results-body');
+                resultsBody.innerHTML = ''; // Clear the table body
+                if (data.results && data.results.length > 0) {
+                    data.results.forEach(result => {
+                        const row = resultsBody.insertRow(0); // Insert at the top
+                        const cell1 = row.insertCell(0);
+                        const cell2 = row.insertCell(1);
+                        const cell3 = row.insertCell(2);
+                        const cell4 = row.insertCell(3);
+                        const cell5 = row.insertCell(4);
+
+                        cell1.textContent = result.suspect_steam_id;
+                        
+                        // Handle long demo URLs with truncation and tooltip
+                        const shareCodeText = result.share_code;
+                        if (shareCodeText.length > 50) {
+                            const truncatedSpan = document.createElement('span');
+                            truncatedSpan.className = 'truncated-text';
+                            truncatedSpan.textContent = shareCodeText.substring(0, 47) + '...';
+                            truncatedSpan.setAttribute('data-full-text', shareCodeText);
+                            truncatedSpan.title = shareCodeText; // Fallback tooltip
+                            cell2.appendChild(truncatedSpan);
+                        } else {
+                            cell2.textContent = shareCodeText;
+                        }
+                        
+                        cell3.textContent = result.submitted_by;
+                        
+                        // Task Status cell
+                        const taskStatus = result.task_status || 'Unknown';
+                        cell4.textContent = taskStatus;
+                        
+                        // Set color based on status
+                        if (taskStatus === 'Uploaded' || taskStatus === 'Saved Locally') {
+                            cell4.style.color = '#03dac6'; // Success color
+                        } else if (taskStatus.includes('Failed')) {
+                            cell4.style.color = '#cf6679'; // Error color
+                        }
+                        
+                        // Actions cell
+                        const showButton = document.createElement('button');
+                        showButton.textContent = 'Show Output';
+                        showButton.className = 'show-output-btn';
+                        showButton.onclick = () => showVideoOutput(result);
+                        cell5.appendChild(showButton);
+                    });
+                } else {
+                    const row = resultsBody.insertRow(0);
+                    const cell = row.insertCell(0);
+                    cell.colSpan = 5;
+                    cell.textContent = 'No completed jobs yet.';
+                    cell.style.textAlign = 'center';
+                }
+
+            } catch (error) {
+                console.error('Failed to fetch status:', error);
+            }
+        }
+
+        // Handle form submission
+        document.getElementById('demo-form').addEventListener('submit', async function(event) {
+            event.preventDefault();
+            const formData = new FormData(this);
+            const formMessage = document.getElementById('form-message');
+
+            try {
+                const response = await fetch('/add_demo', {
+                    method: 'POST',
+                    body: formData
+                });
+                const result = await response.json();
+                
+                formMessage.textContent = result.message;
+                formMessage.className = result.success ? 'success' : 'error';
+
+                if (result.success) {
+                    this.reset(); // Clear the form
+                }
+            } catch (error) {
+                formMessage.textContent = 'An error occurred while submitting the form.';
+                formMessage.className = 'error';
+            }
+            
+            // Update status immediately after submission
+            updateStatus();
+        });
+
+        // Function to show video output in a modal
+        function showVideoOutput(result) {
+            const modal = document.getElementById('video-modal');
+            const modalContent = document.getElementById('modal-video-content');
+            const modalTitle = document.getElementById('modal-title');
+            
+            modalTitle.textContent = `Video Output - ${result.suspect_steam_id}`;
+            
+            if (result.youtube_upload && result.task_status === 'Uploaded') {
+                // YouTube video
+                const videoId = extractYouTubeVideoId(result.youtube_link);
+                if (videoId) {
+                    modalContent.innerHTML = `
+                        <iframe width="560" height="315" 
+                                src="https://www.youtube.com/embed/${videoId}" 
+                                frameborder="0" 
+                                allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" 
+                                allowfullscreen>
+                        </iframe>
+                        <p><a href="${result.youtube_link}" target="_blank">Open in YouTube</a></p>
+                    `;
+                } else {
+                    modalContent.innerHTML = `<p>YouTube video available: <a href="${result.youtube_link}" target="_blank">Watch on YouTube</a></p>`;
+                }
+            } else if (result.task_status === 'Saved Locally') {
+                // Local video
+                const filePath = result.final_video_path || 'Path not available';
+                modalContent.innerHTML = `
+                    <p><strong>Video saved locally:</strong></p>
+                    <p>${filePath}</p>
+                    <p><em>Note: Local videos cannot be embedded in the web interface. Please access the file directly from your file system.</em></p>
+                    <div class="action-buttons">
+                        <button class="copy-location-btn" onclick="copyFileLocation('${filePath.replace(/\\/g, '\\\\')}')">Copy File Location</button>
+                        <a href="https://www.youtube.com/upload" target="_blank" class="youtube-upload-btn">Upload on Youtube</a>
+                    </div>
+                `;
+            } else {
+                // Error or other status
+                modalContent.innerHTML = `
+                    <p><strong>Status:</strong> ${result.task_status}</p>
+                    <p>No video output available.</p>
+                `;
+            }
+            
+            modal.style.display = 'block';
+        }
+        
+        // Function to extract YouTube video ID from URL
+        function extractYouTubeVideoId(url) {
+            const regex = /(?:youtube\.com\/watch\?v=|youtu\.be\/)([^&\n?#]+)/;
+            const match = url.match(regex);
+            return match ? match[1] : null;
+        }
+        
+        // Close modal when clicking outside or on close button
+        window.onclick = function(event) {
+            const modal = document.getElementById('video-modal');
+            if (event.target === modal) {
+                modal.style.display = 'none';
+            }
+        }
+        
+        function closeModal() {
+            document.getElementById('video-modal').style.display = 'none';
+        }
+        
+        // Function to copy file location to clipboard
+        function copyFileLocation(filePath) {
+            if (filePath === 'Path not available') {
+                alert('File path is not available');
+                return;
+            }
+            
+            const button = event.target;
+            const originalText = button.textContent;
+            const originalBgColor = button.style.backgroundColor;
+            
+            // Try multiple methods to copy to clipboard
+            function showSuccess() {
+                button.textContent = 'Copied!';
+                button.style.backgroundColor = '#4caf50';
+                button.style.color = '#ffffff';
+                
+                setTimeout(function() {
+                    button.textContent = originalText;
+                    button.style.backgroundColor = '';
+                    button.style.color = '';
+                }, 2000);
+            }
+            
+            function showError() {
+                // Create a modal-like prompt for manual copying
+                const copyModal = document.createElement('div');
+                copyModal.style.cssText = `
+                    position: fixed; top: 0; left: 0; width: 100%; height: 100%; 
+                    background: rgba(0,0,0,0.8); z-index: 10000; display: flex; 
+                    align-items: center; justify-content: center;
+                `;
+                
+                const copyContent = document.createElement('div');
+                copyContent.style.cssText = `
+                    background: #1e1e1e; padding: 20px; border-radius: 8px; 
+                    max-width: 80%; color: #e0e0e0; border: 2px solid #ff5757;
+                `;
+                
+                copyContent.innerHTML = `
+                    <h3 style="color: #ff5757; margin-top: 0;">Copy File Path</h3>
+                    <p>Please manually copy the file path:</p>
+                    <textarea readonly style="width: 100%; padding: 10px; background: #333; color: #fff; border: 1px solid #555; border-radius: 4px; font-family: monospace; resize: none;" rows="3">${filePath}</textarea>
+                    <div style="margin-top: 15px; text-align: right;">
+                        <button onclick="this.parentElement.parentElement.parentElement.remove()" style="padding: 8px 16px; background: #03dac6; color: #121212; border: none; border-radius: 4px; cursor: pointer; font-weight: bold;">Close</button>
+                    </div>
+                `;
+                
+                copyModal.appendChild(copyContent);
+                document.body.appendChild(copyModal);
+                
+                // Auto-select the text in the textarea
+                const textarea = copyContent.querySelector('textarea');
+                textarea.focus();
+                textarea.select();
+                
+                // Close modal when clicking outside
+                copyModal.addEventListener('click', function(e) {
+                    if (e.target === copyModal) {
+                        copyModal.remove();
+                    }
+                });
+            }
+            
+            // Method 1: Modern clipboard API
+            if (navigator.clipboard && window.isSecureContext) {
+                navigator.clipboard.writeText(filePath).then(showSuccess).catch(function() {
+                    // Method 2: Fallback with execCommand
+                    const textArea = document.createElement('textarea');
+                    textArea.value = filePath;
+                    textArea.style.cssText = 'position: fixed; left: -999999px; top: -999999px;';
+                    document.body.appendChild(textArea);
+                    textArea.focus();
+                    textArea.select();
+                    
+                    try {
+                        if (document.execCommand('copy')) {
+                            showSuccess();
+                        } else {
+                            showError();
+                        }
+                    } catch (err) {
+                        showError();
+                    }
+                    
+                    document.body.removeChild(textArea);
+                });
+            } else {
+                // Method 2: Direct execCommand fallback
+                const textArea = document.createElement('textarea');
+                textArea.value = filePath;
+                textArea.style.cssText = 'position: fixed; left: -999999px; top: -999999px;';
+                document.body.appendChild(textArea);
+                textArea.focus();
+                textArea.select();
+                
+                try {
+                    if (document.execCommand('copy')) {
+                        showSuccess();
+                    } else {
+                        showError();
+                    }
+                } catch (err) {
+                    showError();
+                }
+                
+                document.body.removeChild(textArea);
+            }
+        }
+
+        // Fetch status every 3 seconds
+        setInterval(updateStatus, 3000);
+        // Initial fetch on page load
+        updateStatus();
+    </script>
+</body>
+</html>
