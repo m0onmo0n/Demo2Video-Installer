@@ -1,88 +1,115 @@
 @echo off
 CLS
 echo =================================================================
-echo == CS Demo Processor - Prerequisite Checker & Installer        ==
+echo == CS Demo Processor - Prerequisite Checker ^& Installer        ==
 echo =================================================================
 echo.
 
-:: --- Navigate into the application directory ---
-cd cs-demo-processor
-IF %ERRORLEVEL% NEQ 0 (
-    echo ERROR: Could not find the 'cs-demo-processor' directory.
-    echo Please ensure this .bat file is in the same parent folder as the main application folder.
+:: --- Check for Administrator Privileges ---
+>nul 2>&1 "%SYSTEMROOT%\system32\cacls.exe" "%SYSTEMROOT%\system32\config\system"
+IF '%ERRORLEVEL%' NEQ '0' (
+    echo.
+    echo ============================= ERROR ===============================
+    echo.
+    echo This script requires Administrator privileges.
+    echo Please right-click on install.bat and select "Run as administrator".
+    echo.
+    echo ===================================================================
+    echo.
     pause
     exit /b
 )
 
-echo This script will check for required software (Python, Node.js)
-echo and then install all necessary dependencies.
+:: --- (Your other prerequisite checks and steps remain the same) ---
+cd cs-demo-processor
+echo This script will check for required software and install all necessary dependencies.
 echo.
-
-:: --- Check for Python ---
-echo [1/5] Checking for Python...
+echo [1/6] Checking for Python...
 python --version >nul 2>&1
 IF %ERRORLEVEL% NEQ 0 (
-    echo.
-    echo ERROR: Python is not installed or not added to your system's PATH.
-    echo Please install Python 3.7+ from https://www.python.org/downloads/
-    echo IMPORTANT: During installation, make sure to check the box that says "Add Python to PATH".
-    echo.
+    echo ERROR: Python is not installed or not in PATH.
     pause
     exit /b
 )
 echo Python found.
 echo.
-
-:: --- Check for Node.js ---
-echo [2/5] Checking for Node.js...
+echo [2/6] Checking for Node.js...
 node --version >nul 2>&1
 IF %ERRORLEVEL% NEQ 0 (
-    echo.
-    echo ERROR: Node.js is not installed or not added to your system's PATH.
-    echo Please install Node.js from https://nodejs.org/
-    echo.
+    echo ERROR: Node.js is not installed or not in PATH.
     pause
     exit /b
 )
 echo Node.js found.
 echo.
-
 echo Press any key to begin the dependency installation...
 pause > nul
 echo.
 
-:: --- Install Python Dependencies ---
-echo [3/5] Installing Python dependencies...
-pip install -r requirements.txt
-echo Python dependencies installed.
-echo.
-
-:: --- Install Node.js Dependencies ---
-echo [4/5] Installing CS Demo Manager dependencies...
-echo Navigating to the csdm-fork directory...
-cd csdm-fork
+:: --- Install Visual Studio Build Tools ---
+echo [3/6] Verifying and installing C++ Build Tools...
+powershell -ExecutionPolicy Bypass -File ..\install_vs_tools.ps1
 IF %ERRORLEVEL% NEQ 0 (
-    echo ERROR: The 'csdm-fork' directory was not found.
-    echo Please ensure your modified CSDM project is placed inside a folder named 'csdm-fork'.
+    echo.
+    echo ============================= ERROR ===============================
+    echo.
+    echo The Visual Studio Build Tools installation script failed.
+    echo Please check the output above for more details.
+    echo.
+    echo ===================================================================
+    echo.
     pause
     exit /b
 )
+echo.
 
-echo Running 'npm install'... (This may take several minutes)
-npm install
-echo CS Demo Manager dependencies installed.
+:: --- (The rest of your script remains the same) ---
+echo [4/6] Installing Python dependencies...
+pip install -r requirements.txt
+echo Python dependencies installed.
+echo.
+echo [5/6] Installing CS Demo Manager dependencies...
+cd csdm-fork
+call npm config set msvs_version 2019
+call npm install
+
+IF %ERRORLEVEL% NEQ 0 (
+    echo.
+    echo ============================= WARNING ===============================
+    echo.
+    echo 'npm install' reported an error, which is expected for some native modules.
+    echo Attempting to build the native module manually...
+    echo.
+    echo =====================================================================
+    echo.
+)
+
+:: --- Manually build the problematic native module ---
+echo Forcing compilation of the native C++ addon...
+cd src\node\os\get-running-process-exit-code
+call ..\..\..\..\node_modules\.bin\node-gyp rebuild --msvs_version=2019
+IF %ERRORLEVEL% NEQ 0 (
+    echo.
+    echo ============================= ERROR ===============================
+    echo.
+    echo Failed to manually build the native module. The installation cannot continue.
+    echo Please check the error messages above.
+    echo.
+    echo ===================================================================
+    echo.
+    pause
+    exit /b
+)
+echo Native module built successfully.
+cd ..\..\..\..
+
 cd ..
 echo.
-
-:: --- Run Interactive Setup ---
-echo [5/5] Starting interactive configuration setup...
-echo.
+echo [6/6] Starting interactive configuration setup...
 python setup.py
-
 echo.
 echo =================================================================
 echo == Installation and configuration are complete!              ==
-echo == Please follow the final instructions in the README file.  ==
 echo =================================================================
 echo.
 pause

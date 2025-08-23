@@ -4,7 +4,6 @@ import configparser
 import logging
 import time
 import threading
-import pyautogui
 
 import csdm_cli_handler
 import youtube_uploader
@@ -40,12 +39,17 @@ def processing_worker():
     config = configparser.ConfigParser()
     config.read('config.ini')
     try:
-        csdm_project_path = config['Paths']['csdm_project_path']
+        # UPDATED: The csdm_project_path is now determined automatically.
+        # It's the 'csdm-fork' subfolder within the current working directory of the script.
+        csdm_project_path = os.path.join(os.getcwd(), 'csdm-fork')
+        if not os.path.isdir(csdm_project_path):
+            raise FileNotFoundError("The 'csdm-fork' directory was not found in the project folder.")
+            
         output_folder = config['Paths']['output_folder']
         obs_host = config['OBS']['host']
         obs_port = int(config['OBS']['port'])
-    except KeyError as e:
-        logging.error(f"Configuration error: Missing key {e} in config.ini.")
+    except (KeyError, FileNotFoundError) as e:
+        logging.error(f"Configuration error: {e}")
         return
 
     while True:
@@ -60,20 +64,13 @@ def processing_worker():
 
             try:
                 # Step 1: Download Demo
-                user_input = job['share_code']
+                update_status("Processing", "Parsing share code...", suspect_steam_id)
+                share_code = demo_downloader.parse_share_code(job['share_code'])
+                if not share_code:
+                    raise ValueError("Invalid share code provided.")
                 
-                # Check if input is a direct demo URL or a share code
-                if demo_downloader.is_demo_url(user_input):
-                    update_status("Processing", "Direct demo URL detected, downloading...", suspect_steam_id)
-                    demo_path = demo_downloader.download_demo(user_input, output_folder)
-                else:
-                    update_status("Processing", "Parsing share code...", suspect_steam_id)
-                    share_code = demo_downloader.parse_share_code(user_input)
-                    if not share_code:
-                        raise ValueError("Invalid share code provided.")
-                    
-                    update_status("Processing", f"Downloading demo for {share_code}...", suspect_steam_id)
-                    demo_path = demo_downloader.download_demo(share_code, output_folder)
+                update_status("Processing", f"Downloading demo for {share_code}...", suspect_steam_id)
+                demo_path = demo_downloader.download_demo(share_code, output_folder)
                 if not demo_path:
                     raise RuntimeError("Failed to download demo.")
 
@@ -101,7 +98,6 @@ def processing_worker():
 
                 update_status("Recording", "Waiting for highlights to finish...", suspect_steam_id)
                 
-                # UPDATED: Called the correct function name from the CLI handler.
                 if not csdm_cli_handler.wait_for_cs2_to_close():
                     raise RuntimeError("Timed out waiting for CS2 process to close.")
 
@@ -120,7 +116,6 @@ def processing_worker():
                 if obs.is_connected:
                     obs.disconnect()
                 
-                # This is now just a backup in case the process hangs.
                 csdm_cli_handler.force_close_cs2()
 
                 # --- Upload Step ---
@@ -169,17 +164,11 @@ def processing_worker():
 if __name__ == '__main__':
     setup_logging()
     
-    config = configparser.ConfigParser()
-    config.read('config.ini')
-    try:
-        password = config['Web']['password']
-    except KeyError:
-        logging.error("Password not found in config.ini.")
-        sys.exit(1)
-
+    # Start the processing worker in a separate thread
     worker_thread = threading.Thread(target=processing_worker, name="ProcessingWorker")
     worker_thread.daemon = True
     worker_thread.start()
 
+    # Start the Flask web server in the main thread
     logging.info("Starting web server on http://localhost:5001")
-    run_web_server(password=password)
+    run_web_server()

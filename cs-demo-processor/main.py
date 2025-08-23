@@ -86,14 +86,27 @@ def processing_worker():
     config = configparser.ConfigParser()
     config.read('config.ini')
     try:
-        csdm_project_path = config['Paths']['csdm_project_path']
-        demos_folder = config['Paths']['demos_folder']
+        # AMENDED: Automatically determine the csdm_project_path
+        # It's the 'csdm-fork' subfolder within the current script's directory.
+        csdm_project_path = os.path.join(os.getcwd(), 'csdm-fork')
+        if not os.path.isdir(csdm_project_path):
+            raise FileNotFoundError("The 'csdm-fork' directory was not found. Please ensure it's in the same folder as main.py.")
+
+        # Your custom logic uses a separate demos_folder and output_folder.
+        # The simplified config only has 'output_folder'. We will use it for both.
         output_folder = config['Paths']['output_folder']
+        demos_folder = output_folder # Use the same folder for downloads and recordings.
+        
         obs_host = config['OBS']['host']
         obs_port = int(config['OBS']['port'])
-        video_generate_only = config['Video'].getboolean('video_generate_only', True)
-    except KeyError as e:
-        logging.error(f"Configuration error: Missing key {e} in config.ini.")
+        
+        # Handle your custom [Video] section gracefully
+        video_generate_only = True # Default to True if section or key is missing
+        if 'Video' in config and 'video_generate_only' in config['Video']:
+            video_generate_only = config['Video'].getboolean('video_generate_only')
+
+    except (KeyError, FileNotFoundError) as e:
+        logging.error(f"Configuration error: {e}")
         return
 
     while True:
