@@ -15,7 +15,6 @@ def get_valid_path(prompt, must_exist=True):
             print("\nERROR: The path you entered does not exist. Please try again.\n")
             continue
         if not must_exist:
-            # Ensure the parent directory exists before returning
             parent_dir = os.path.dirname(path)
             if parent_dir and not os.path.exists(parent_dir):
                 os.makedirs(parent_dir, exist_ok=True)
@@ -42,12 +41,14 @@ def main():
     print("The default user is 'postgres' and the database is 'csdm'.")
     db_password = getpass("Enter your PostgreSQL password for the 'postgres' user: ")
 
-    # --- Create CSDM settings.json ---
-    csdm_settings_dir = os.path.expanduser("~/.csdm-dev")
-    os.makedirs(csdm_settings_dir, exist_ok=True)
-    settings_json_path = os.path.join(csdm_settings_dir, 'settings.json')
+    # --- Create CSDM configurations in all required locations ---
     
-    csdm_config = {
+    # Location 1: .csdm-dev/settings.json (for developer mode)
+    csdm_settings_dir_dev = os.path.expanduser("~/.csdm-dev")
+    os.makedirs(csdm_settings_dir_dev, exist_ok=True)
+    settings_json_path_dev = os.path.join(csdm_settings_dir_dev, 'settings.json')
+    
+    csdm_config_json = {
       "database": {
         "host": "127.0.0.1",
         "port": 5432,
@@ -63,13 +64,32 @@ def main():
     }
     
     try:
-        with open(settings_json_path, 'w') as f:
-            json.dump(csdm_config, f, indent=4)
-        print(f"\nSuccessfully created CSDM settings file at: {settings_json_path}")
+        with open(settings_json_path_dev, 'w') as f:
+            json.dump(csdm_config_json, f, indent=4)
+        print(f"\n[SUCCESS] Created dev settings file at: {settings_json_path_dev}")
     except Exception as e:
-        print(f"\nERROR: Could not create CSDM settings file. {e}")
-        input("\nPress Enter to exit.")
-        return
+        print(f"\n[ERROR] Could not create dev settings file. {e}")
+
+    # Location 2: .csdm/settings.json (for production/installed mode)
+    csdm_settings_dir_prod = os.path.expanduser("~/.csdm")
+    os.makedirs(csdm_settings_dir_prod, exist_ok=True)
+    settings_json_path_prod = os.path.join(csdm_settings_dir_prod, 'settings.json')
+    try:
+        with open(settings_json_path_prod, 'w') as f:
+            json.dump(csdm_config_json, f, indent=4)
+        print(f"[SUCCESS] Created prod settings file at: {settings_json_path_prod}")
+    except Exception as e:
+        print(f"\n[ERROR] Could not create prod settings file. {e}")
+
+    # Location 3: csdm-fork/.env file
+    env_file_path = os.path.join(os.getcwd(), 'csdm-fork', '.env')
+    env_content = f"VITE_DATABASE_URL=postgresql://postgres:{db_password}@127.0.0.1:5432/csdm"
+    try:
+        with open(env_file_path, 'w') as f:
+            f.write(env_content)
+        print(f"[SUCCESS] Created .env file at: {env_file_path}")
+    except Exception as e:
+        print(f"\n[ERROR] Could not create .env file. {e}")
         
     clear_screen()
 
@@ -82,7 +102,6 @@ def main():
     # --- Create Main App config.ini ---
     main_app_config = configparser.ConfigParser()
     main_app_config['Paths'] = {
-        'csdm_project_path': os.path.join(os.getcwd(), 'csdm-fork'),
         'output_folder': output_folder
     }
     main_app_config['OBS'] = {
