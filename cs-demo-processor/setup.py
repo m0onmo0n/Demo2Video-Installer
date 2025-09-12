@@ -29,7 +29,7 @@ def main():
     print("\nThis script will help you create the configuration files for both the")
     print("main application and the CS Demo Manager fork.")
     print("\nPlease have the following information ready:")
-    print("  - The password for your PostgreSQL database user.")
+    print("  - The password for the PostgreSQL database user.")
     print("  - The full path to the folder where OBS saves its recordings.")
     print("\nPress Enter to begin...")
     input()
@@ -38,8 +38,8 @@ def main():
     # --- Get CSDM Database Settings ---
     print("--- Step 1: CS Demo Manager Database Configuration ---\n")
     print("The CSDM fork needs to connect to your PostgreSQL database.")
-    print("The default user is 'postgres' and the database is 'csdm'.")
-    db_password = getpass("Enter your PostgreSQL password for the 'postgres' user: ")
+    print("The default user is 'csdm' and the database is 'csdm'.")
+    db_password = getpass("Enter the PostgreSQL password for the 'csdm' user in the public csdm instance(look in discord): ")
 
     # --- Create CSDM configurations in all required locations ---
     
@@ -50,9 +50,9 @@ def main():
     
     csdm_config_json = {
       "database": {
-        "host": "127.0.0.1",
-        "port": 5432,
-        "user": "postgres",
+        "host": "csdm.xify.pro",
+        "port": 8432,
+        "user": "csdm",
         "password": db_password,
         "database": "csdm"
       },
@@ -83,7 +83,7 @@ def main():
 
     # Location 3: csdm-fork/.env file
     env_file_path = os.path.join(os.getcwd(), 'csdm-fork', '.env')
-    env_content = f"VITE_DATABASE_URL=postgresql://postgres:{db_password}@127.0.0.1:5432/csdm"
+    env_content = f"VITE_DATABASE_URL=postgresql://csdm:{db_password}@csdm.xify.pro:8432/csdm"
     try:
         with open(env_file_path, 'w') as f:
             f.write(env_content)
@@ -124,6 +124,7 @@ def main():
     print("=================================================================")
     print("\n1. YouTube Setup: Run 'python setup_youtube_auth.py' to authorize the app.")
     print("\n2. Start Servers: Follow the 'How to Run' steps in the README file.")
+    print("\n3. If you want to connect to your own postgresql database, you can edit the settings.json file")
     
     input("\nPress Enter to exit the setup.")
 
