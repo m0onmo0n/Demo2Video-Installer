@@ -62,15 +62,14 @@ IF %ERRORLEVEL% NEQ 0 (
     exit /b
 )
 echo.
-
 :: --- (The rest of your script remains the same) ---
 echo [4/6] Installing Python dependencies...
-pip install -r requirements.txt
+pip install -r %~dp0\cs-demo-processor\requirements.txt
 echo Python dependencies installed.
 echo.
 echo [5/6] Installing CS Demo Manager dependencies...
-cd csdm-fork
-call npm config set msvs_version 2019
+cd %~dp0\cs-demo-processor\csdm-fork
+call setx msvs_version "2019"
 call npm install
 
 IF %ERRORLEVEL% NEQ 0 (
@@ -83,26 +82,7 @@ IF %ERRORLEVEL% NEQ 0 (
     echo =====================================================================
     echo.
 )
-
-:: --- Manually build the problematic native module ---
-echo Forcing compilation of the native C++ addon...
-cd src\node\os\get-running-process-exit-code
-call ..\..\..\..\node_modules\.bin\node-gyp rebuild
-IF %ERRORLEVEL% NEQ 0 (
-    echo.
-    echo ============================= ERROR ===============================
-    echo.
-    echo Failed to manually build the native module. The installation cannot continue.
-    echo Please check the error messages above.
-    echo.
-    echo ===================================================================
-    echo.
-    pause
-    exit /b
-)
-echo Native module built successfully.
-cd ..\..\..\..
-
+echo.
 cd ..
 echo.
 echo [6/6] Starting interactive configuration setup...
