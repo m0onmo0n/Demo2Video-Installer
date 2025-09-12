@@ -6,7 +6,7 @@ echo =================================================================
 echo.
 
 :: --- Navigate into the application directory ---
-cd cs-demo-processor
+cd %~dp0\cs-demo-processor
 IF %ERRORLEVEL% NEQ 0 (
     echo ERROR: Could not find the 'cs-demo-processor' directory.
     echo Please ensure this .bat file is in the same parent folder as the main application folder.
