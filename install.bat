@@ -48,7 +48,7 @@ echo.
 
 :: --- Install Visual Studio Build Tools ---
 echo [3/6] Verifying and installing C++ Build Tools...
-powershell -ExecutionPolicy Bypass -File ..\install_vs_tools.ps1
+powershell -ExecutionPolicy Bypass -File %~dp0\install_vs_tools.ps1
 IF %ERRORLEVEL% NEQ 0 (
     echo.
     echo ============================= ERROR ===============================
@@ -87,7 +87,7 @@ IF %ERRORLEVEL% NEQ 0 (
 :: --- Manually build the problematic native module ---
 echo Forcing compilation of the native C++ addon...
 cd src\node\os\get-running-process-exit-code
-call ..\..\..\..\node_modules\.bin\node-gyp rebuild --msvs_version=2019
+call ..\..\..\..\node_modules\.bin\node-gyp rebuild
 IF %ERRORLEVEL% NEQ 0 (
     echo.
     echo ============================= ERROR ===============================
