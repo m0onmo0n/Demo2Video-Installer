@@ -1,86 +1,88 @@
-<# 
-  Bootstrap installer for Demo2Video on Windows.
-
-  What it does:
-   - Elevates to Admin
-   - Enables NTFS long paths
-   - Ensures winget is available
-   - Installs 7-Zip (CLI) if missing
-   - (Optional) Installs Git if you want to clone later
-   - Downloads the repo ZIP and extracts with 7-Zip to a short path (C:\d2v)
-   - Runs install.bat
-
-  Quick start:
-    irm https://raw.githubusercontent.com/m0onmo0n/Demo2Video-Installer/main/bootstrap.ps1 | iex
-#>
+# Demo2Video Bootstrap (Windows) — minimal, ASCII-only
 
 [CmdletBinding()]
 param(
-  # ZIP of your default branch
   [string]$RepoZipUrl = "https://github.com/m0onmo0n/Demo2Video-Installer/archive/refs/heads/main.zip",
-
-  # Where to place the project (keep short to avoid path issues)
   [string]$DestRoot   = "C:\d2v",
-
-  # Set to $true if you also want Git installed for contributors
   [bool]  $InstallGit = $false
 )
 
-$ErrorActionPreference = 'Stop'
-$HadToElevate = $false
-
-function Restart-AsAdmin {
-  $isAdmin = ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()
-    ).IsInRole([Security.Principal.WindowsBuiltinRole]::Administrator)
-  if (-not $isAdmin) {
-    # If invoked via irm|iex, $PSCommandPath can be empty. Persist self to temp and elevate that.
-    $scriptPath = $PSCommandPath
-    if (-not $scriptPath) {
-      $scriptPath = Join-Path $env:TEMP "d2v_bootstrap.ps1"
-      Set-Content -Encoding UTF8 -NoNewline -Path $scriptPath -Value ($MyInvocation.MyCommand.Definition)
-    }
-    $scriptArgs = @(
-      '-NoProfile','-ExecutionPolicy','Bypass',
-      '-File', $scriptPath,
-      '-RepoZipUrl', $RepoZipUrl,
-      '-DestRoot',   $DestRoot,
-      '-InstallGit', $InstallGit
-    )
-    $global:HadToElevate = $true
-    Start-Process -FilePath "powershell.exe" -Verb RunAs -ArgumentList $scriptArgs | Out-Null
-    exit
-  }
-}
-Restart-AsAdmin
-
-$ts  = Get-Date -Format 'yyyyMMdd_HHmmss'
-$log = Join-Path $env:TEMP "demo2video_bootstrap_$ts.log"
-try { Start-Transcript -Path $log -Append | Out-Null } catch {}
+$ErrorActionPreference = "Stop"
 
 Write-Host "== Demo2Video Bootstrap =="
-Write-Host "Log: $log"
 
+# 1) Enable NTFS long paths
 try {
-  # 1) Enable NTFS long paths
-  try {
-    $val = Get-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem' -Name LongPathsEnabled -ErrorAction Stop
-    if ($val.LongPathsEnabled -ne 1) {
-      Write-Host "Enabling Windows long paths..."
-      New-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem' `
-        -Name LongPathsEnabled -PropertyType DWord -Value 1 -Force | Out-Null
-    } else {
-      Write-Host "Windows long paths already enabled."
-    }
-  } catch {
-    Write-Warning "Could not verify/enable LongPathsEnabled; continuing."
+  $cur = Get-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem" -Name LongPathsEnabled -ErrorAction Stop
+  if ($cur.LongPathsEnabled -ne 1) {
+    Write-Host "Enabling Windows long paths..."
+    New-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem" -Name LongPathsEnabled -PropertyType DWord -Value 1 -Force | Out-Null
+  } else {
+    Write-Host "Windows long paths already enabled."
   }
+} catch {
+  Write-Warning "Could not verify/enable LongPathsEnabled; continuing."
+}
 
-  # 2) Ensure winget exists
-  if (-not (Get-Command winget -ErrorAction SilentlyContinue)) {
-    throw "winget not found. Install 'App Installer' from Microsoft Store, then rerun."
-  }
+# 2) Require winget
+if (-not (Get-Command winget -ErrorAction SilentlyContinue)) {
+  Write-Error "winget not found. Install 'App Installer' from Microsoft Store, then rerun."
+  exit 1
+}
 
-  # 3) Ensure 7-Zip CLI
-  $sevenZip = "$env:ProgramFiles\7-Zip\7z.exe"
-  if (-not (Test-Path $sevenZip)) {
-    Write-Host "Installi
+# 3) Ensure 7-Zip CLI
+$sevenZip = Join-Path $env:ProgramFiles "7-Zip\7z.exe"
+if (-not (Test-Path $sevenZip)) {
+  Write-Host "Installing 7-Zip..."
+  winget install -e --id 7zip.7zip --silent --accept-source-agreements --accept-package-agreements
+}
+if (-not (Test-Path $sevenZip)) {
+  Write-Error "7-Zip not found after install."
+  exit 1
+}
+
+# 4) (Optional) Git for contributors
+if ($InstallGit -and -not (Get-Command git -ErrorAction SilentlyContinue)) {
+  Write-Host "Installing Git..."
+  winget install -e --id Git.Git --silent --accept-source-agreements --accept-package-agreements
+  try { git config --system core.longpaths true | Out-Null } catch {}
+}
+
+# 5) Download ZIP
+$ts = Get-Date -Format "yyyyMMdd_HHmmss"
+$tempZip = Join-Path $env:TEMP ("demo2video_" + $ts + ".zip")
+Write-Host "Downloading archive..."
+Invoke-WebRequest -UseBasicParsing -Uri $RepoZipUrl -OutFile $tempZip
+
+# 6) Extract to short path
+$dest = $DestRoot.TrimEnd("\")
+if (-not (Test-Path $dest)) { New-Item -ItemType Directory -Path $dest | Out-Null }
+$destLong = "\\?\$dest"
+Write-Host "Extracting to $dest ..."
+& $sevenZip x $tempZip ("-o" + $destLong) -y | Out-Null
+
+# 7) Normalize folder name
+$extracted = Get-ChildItem -Path $dest -Directory | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+if (-not $extracted) {
+  Write-Error "Extraction failed (no folder found in $dest)."
+  exit 1
+}
+$projectDir = Join-Path $dest "Demo2Video-Installer"
+if (-not (Test-Path $projectDir)) { New-Item -ItemType Directory -Path $projectDir | Out-Null }
+
+Write-Host "Finalizing folder layout..."
+$robocopyArgs = @("`"$($extracted.FullName)`"", "`"$projectDir`"", "/MIR", "/NFL", "/NDL", "/NJH", "/NJS", "/NP")
+$p = Start-Process -FilePath robocopy.exe -ArgumentList $robocopyArgs -PassThru -WindowStyle Hidden
+$p.WaitForExit() | Out-Null
+
+# 8) Launch installer
+$installer = Join-Path $projectDir "install.bat"
+if (-not (Test-Path $installer)) {
+  Write-Error "install.bat not found at $installer"
+  exit 1
+}
+Write-Host "Launching installer..."
+Start-Process -FilePath "cmd.exe" -Verb RunAs -ArgumentList ("/c `"" + $installer + "`"")
+
+Write-Host "Bootstrap finished. If the installer did not appear, run the file manually as Administrator:"
+Write-Host "  $installer"
