@@ -38,13 +38,6 @@ What it does:
 
 * Launches install.bat
 
-If you prefer Git:
-
-1. Install Git: winget install -e --id Git.Git
-
-2. git config --system core.longpaths true
-
-3. git clone https://github.com/<you>/<repo>.git C:\src\d2v
 2.  **Run the Installer**: From the main project folder, double-click the `install.bat` file. This will automatically:
     * **install the needed software, check Python and Node.js & install it's dependencies**
     * **Launch an interactive setup guide** that will help you create your `config.ini` file.
