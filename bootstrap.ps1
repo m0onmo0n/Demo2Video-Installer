@@ -5,14 +5,15 @@
 param(
   [string]$RepoZipUrl = 'https://github.com/m0onmo0n/Demo2Video-Installer/archive/refs/heads/main.zip',
   [string]$DestRoot   = 'C:\d2v',
-  [switch]$Force,
-  [switch]$KeepExtracted
+  [switch]$Force
 )
 
 $ErrorActionPreference = 'Stop'
 
 function Restart-AsAdmin {
-  $isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltinRole]::Administrator)
+  $isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole(
+    [Security.Principal.WindowsBuiltinRole]::Administrator
+  )
   if (-not $isAdmin) {
     $args = @(
       '-NoProfile','-ExecutionPolicy','Bypass',
@@ -20,8 +21,7 @@ function Restart-AsAdmin {
       '-RepoZipUrl', $RepoZipUrl,
       '-DestRoot',   $DestRoot
     )
-    if ($Force)        { $args += '-Force' }
-    if ($KeepExtracted){ $args += '-KeepExtracted' }
+    if ($Force) { $args += '-Force' }
     Start-Process -FilePath 'powershell.exe' -Verb RunAs -ArgumentList $args | Out-Null
     exit
   }
@@ -31,7 +31,7 @@ function Enable-LongPaths {
   try {
     $regPath = 'HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem'
     $name    = 'LongPathsEnabled'
-    $val     = 0
+    $val = 0
     try { $val = (Get-ItemProperty -Path $regPath -Name $name -ErrorAction Stop).LongPathsEnabled } catch { }
     if ($val -ne 1) {
       New-ItemProperty -Path $regPath -Name $name -PropertyType DWord -Value 1 -Force | Out-Null
@@ -46,17 +46,16 @@ function Enable-LongPaths {
 
 function Try-RepairWinget {
   try {
-    $wg = Get-Command winget -ErrorAction SilentlyContinue
-    if ($wg) {
+    if (Get-Command winget -ErrorAction SilentlyContinue) {
       winget source list > $null 2>&1
       if ($LASTEXITCODE -ne 0) {
-        winget source reset --force | Out-Null
-        winget source update | Out-Null
+        winget source reset --force
+        winget source update
       }
       return $true
     }
-    return $false
-  } catch { return $false }
+  } catch { }
+  return $false
 }
 
 function Try-Install7Zip {
@@ -64,7 +63,8 @@ function Try-Install7Zip {
   $sevenZip = Join-Path $env:ProgramFiles '7-Zip\7z.exe'
   if (Test-Path $sevenZip) { return $sevenZip }
 
-  if (Try-RepairWinget) {
+  $wingetOk = Try-RepairWinget
+  if ($wingetOk) {
     try {
       Write-Host 'Installing 7-Zip via winget...'
       $p = Start-Process -FilePath 'winget' -ArgumentList @(
@@ -74,13 +74,16 @@ function Try-Install7Zip {
       if ($p.ExitCode -eq 0 -and (Test-Path $sevenZip)) { return $sevenZip }
     } catch { }
   }
+
   return $null
 }
 
 function Get-Extractor {
   # Prefer 7-Zip CLI; else tar.exe
   $sevenZip = Try-Install7Zip
-  if ($sevenZip) { return @{ Tool = '7z'; Path = $sevenZip } }
+  if ($sevenZip) {
+    return @{ Tool = '7z'; Path = $sevenZip }
+  }
   $tar = Get-Command tar.exe -ErrorAction SilentlyContinue
   if ($tar) {
     Write-Warning '7-Zip not available; falling back to built-in tar.exe for ZIP extraction.'
@@ -90,9 +93,12 @@ function Get-Extractor {
 }
 
 function Download-Zip {
-  param([Parameter(Mandatory=$true)][string]$Url,[Parameter(Mandatory=$true)][string]$OutFile)
+  param([string]$Url,[string]$OutFile)
   if ([string]::IsNullOrWhiteSpace($Url)) { throw 'RepoZipUrl is empty.' }
-  if (Test-Path $OutFile) { try { Remove-Item -Force $OutFile } catch { } }
+  if (Test-Path $OutFile) {
+    if ($Force) { Remove-Item -Force $OutFile }
+    if (Test-Path $OutFile) { Remove-Item -Force $OutFile }
+  }
   Write-Host 'Downloading archive...'
   $p = Start-Process -FilePath 'curl.exe' -ArgumentList @('-L', $Url, '-o', $OutFile) -PassThru -NoNewWindow -Wait
   if ($p.ExitCode -ne 0) { throw ('curl.exe failed (exit {0})' -f $p.ExitCode) }
@@ -100,28 +106,23 @@ function Download-Zip {
 }
 
 function Extract-Zip {
-  param([Parameter(Mandatory=$true)][string]$ZipPath,[Parameter(Mandatory=$true)][string]$Dest,[Parameter(Mandatory=$true)][hashtable]$Extractor)
+  param([string]$ZipPath,[string]$Dest,[hashtable]$Extractor)
   if (-not (Test-Path $Dest)) { New-Item -ItemType Directory -Path $Dest | Out-Null }
-  Write-Host ("Extracting to {0} ..." -f $Dest)
+  Write-Host ('Extracting to {0} ...' -f $Dest)
   if ($Extractor.Tool -eq '7z') {
-    $destLong = ("\\?\{0}" -f $Dest)
-    & $Extractor.Path 'x' $ZipPath ("-o" + $destLong) '-y' | Out-Null
+    $destLong = '\\?\{0}' -f $Dest
+    & $Extractor.Path 'x' $ZipPath ('-o' + $destLong) '-y' | Out-Null
   } else {
     & $Extractor.Path '-xf' $ZipPath '-C' $Dest
   }
 }
 
 function Finalize-Folder {
-  param([Parameter(Mandatory=$true)][string]$Dest,[switch]$Keep,[switch]$ForceExisting)
-  # GitHub ZIP contains a single top-level folder like Demo2Video-Installer-main
+  param([string]$Dest)
+  # ZIP contains a single top-level folder (e.g., Demo2Video-Installer-main)
   $extracted = Get-ChildItem -Path $Dest -Directory | Sort-Object LastWriteTime -Descending | Select-Object -First 1
   if (-not $extracted) { throw 'Extraction failed (no folder found).' }
-
   $projectDir = Join-Path $Dest 'Demo2Video-Installer'
-  if (Test-Path $projectDir -and $ForceExisting) {
-    Write-Host ("Removing existing ""{0}"" due to -Force..." -f $projectDir)
-    Remove-Item -Recurse -Force $projectDir
-  }
   if (-not (Test-Path $projectDir)) { New-Item -ItemType Directory -Path $projectDir | Out-Null }
 
   Write-Host 'Finalizing folder layout...'
@@ -132,18 +133,11 @@ function Finalize-Folder {
   )
   $rob = Start-Process -FilePath 'robocopy.exe' -ArgumentList $args -PassThru -WindowStyle Hidden -Wait
   if ($rob.ExitCode -ge 8) { throw ('robocopy failed (exit {0})' -f $rob.ExitCode) }
-
-  if (-not $Keep) {
-    if ($extracted.FullName -ne $projectDir) {
-      Write-Host ("Removing raw extracted folder ""{0}""..." -f $extracted.FullName)
-      Remove-Item -Recurse -Force $extracted.FullName
-    }
-  }
   return $projectDir
 }
 
 function Run-Installer {
-  param([Parameter(Mandatory=$true)][string]$ProjectDir)
+  param([string]$ProjectDir)
   $installer = Join-Path $ProjectDir 'install.bat'
   if (-not (Test-Path $installer)) { throw ('install.bat not found at {0}' -f $installer) }
   Write-Host 'Launching installer...'
@@ -159,21 +153,15 @@ Write-Host '== Demo2Video Bootstrap =='
 Enable-LongPaths
 
 $dest = $DestRoot.TrimEnd('\')
-if (-not (Test-Path $dest)) { New-Item -ItemType Directory -Path $dest | Out-Null }
+if (-not (Test-Path $dest)) {
+  New-Item -ItemType Directory -Path $dest | Out-Null
+}
 
-$tempZip   = Join-Path $env:TEMP 'demo2video.zip'
+$tempZip = Join-Path $env:TEMP 'demo2video.zip'
 $extractor = Get-Extractor
 Download-Zip -Url $RepoZipUrl -OutFile $tempZip
 Extract-Zip  -ZipPath $tempZip -Dest $dest -Extractor $extractor
-
-# Build a param set and only add switches when true (avoids -Keep:$var parsing quirks)
-$finalizeParams = @{ Dest = $dest }
-if ($KeepExtracted) { $finalizeParams.Keep = $true }
-if ($Force)         { $finalizeParams.ForceExisting = $true }
-$proj = Finalize-Folder @finalizeParams
-
-if (Test-Path $tempZip) { try { Remove-Item -Force $tempZip } catch { } }
-
+$proj = Finalize-Folder -Dest $dest
 Run-Installer -ProjectDir $proj
 
 Write-Host 'Done.'
