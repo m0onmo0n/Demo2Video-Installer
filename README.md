@@ -25,7 +25,13 @@ Before you begin, you must manually install the following programs:
 irm https://raw.githubusercontent.com/m0onmo0n/Demo2Video-Installer/main/bootstrap.ps1 | iex
 
 ```
-
+alternative 1 line command in and elevated **PowerShell**
+```powershell
+Start-Process powershell -Verb RunAs -ArgumentList @(
+  '-NoExit','-NoProfile','-ExecutionPolicy','Bypass',
+  '-Command','irm https://raw.githubusercontent.com/m0onmo0n/Demo2Video-Installer/main/bootstrap.ps1 | iex'
+)
+```
 What it does:
 
 * Enables Windows long paths
