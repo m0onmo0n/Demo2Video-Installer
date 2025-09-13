@@ -54,11 +54,11 @@ if ($InstallGit -and -not (Get-Command git -ErrorAction SilentlyContinue)) {
   try { git config --system core.longpaths true | Out-Null } catch {}
 }
 
-# 5) Fast ZIP download (no functions, no tricky expressions)
+# 5) Fast ZIP download (codeload + curl, with fallbacks)
 $ts = Get-Date -Format 'yyyyMMdd_HHmmss'
 $tempZip = Join-Path $env:TEMP ('demo2video_' + $ts + '.zip')
 
-# Rewrite GitHub archive URL to codeload format for speed
+# Rewrite GitHub archive URL to codeload for speed
 if ($RepoZipUrl -match '^https://github\.com/([^/]+)/([^/]+)/archive/refs/heads/([^/]+)\.zip$') {
   $owner  = $Matches[1]
   $repo   = $Matches[2]
