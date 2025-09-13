@@ -1,4 +1,4 @@
-# Demo2Video Bootstrap (Windows) — fast download, ASCII-only, no backticks
+# Demo2Video Bootstrap (Windows) — simple, fast, ASCII-only
 
 [CmdletBinding()]
 param(
@@ -35,7 +35,6 @@ if (-not (Get-Command winget -ErrorAction SilentlyContinue)) {
 # 3) Ensure 7-Zip CLI
 $sevenZip = Join-Path $env:ProgramFiles '7-Zip\7z.exe'
 if (-not (Test-Path $sevenZip)) {
-  # Try 32-bit location as well (rare on x64)
   $sevenZipX86 = Join-Path ${env:ProgramFiles(x86)} '7-Zip\7z.exe'
   if (Test-Path $sevenZipX86) { $sevenZip = $sevenZipX86 }
 }
@@ -55,7 +54,7 @@ if ($InstallGit -and -not (Get-Command git -ErrorAction SilentlyContinue)) {
   try { git config --system core.longpaths true | Out-Null } catch {}
 }
 
-# 5) Fast + robust ZIP download
+# 5) Fast ZIP download (no functions, no tricky expressions)
 $ts = Get-Date -Format 'yyyyMMdd_HHmmss'
 $tempZip = Join-Path $env:TEMP ('demo2video_' + $ts + '.zip')
 
@@ -70,11 +69,81 @@ if ($RepoZipUrl -match '^https://github\.com/([^/]+)/([^/]+)/archive/refs/heads/
 Write-Host 'Downloading archive from:'
 Write-Host '  ' $RepoZipUrl
 
-function Download-WithCurl {
-  param($url, $out)
-  $curl = Get-Command curl.exe -ErrorAction SilentlyContinue
-  if (-not $curl) { return $false }
-  $args = @('-L', $url, '-o', $out, '--retry', '3', '--retry-delay', '2')
-  $p = Start-Process -FilePath $curl.Source -ArgumentList $args -PassThru -NoNewWindow
-  $null = $p.WaitForExit()
-  return ((Test
+$ok = $false
+
+# Try curl.exe first
+$curl = Get-Command curl.exe -ErrorAction SilentlyContinue
+if ($curl) {
+  $proc = Start-Process -FilePath $curl.Source -ArgumentList @('-L', $RepoZipUrl, '-o', $tempZip, '--retry', '3', '--retry-delay', '2') -PassThru -NoNewWindow
+  $null = $proc.WaitForExit()
+  if (Test-Path $tempZip) {
+    $fi = Get-Item $tempZip
+    if ($fi.Length -gt 0) { $ok = $true }
+  }
+}
+
+# Fall back to Invoke-WebRequest
+if (-not $ok) {
+  try {
+    $old = $global:ProgressPreference
+    $global:ProgressPreference = 'SilentlyContinue'
+    Invoke-WebRequest -Uri $RepoZipUrl -OutFile $tempZip -MaximumRedirection 5 -TimeoutSec 300
+    $global:ProgressPreference = $old
+    if (Test-Path $tempZip) {
+      $fi = Get-Item $tempZip
+      if ($fi.Length -gt 0) { $ok = $true }
+    }
+  } catch {
+    $ok = $false
+  }
+}
+
+# Fall back to BITS
+if (-not $ok) {
+  try {
+    Start-BitsTransfer -Source $RepoZipUrl -Destination $tempZip -TransferPolicy AlwaysForeground -ErrorAction Stop
+    if (Test-Path $tempZip) {
+      $fi = Get-Item $tempZip
+      if ($fi.Length -gt 0) { $ok = $true }
+    }
+  } catch {
+    $ok = $false
+  }
+}
+
+if (-not $ok) {
+  Write-Error ('Failed to download ZIP from {0}' -f $RepoZipUrl)
+  exit 1
+}
+
+# 6) Extract to a short path (use \\?\ to help long paths)
+$dest = $DestRoot.TrimEnd('\')
+if (-not (Test-Path $dest)) { New-Item -ItemType Directory -Path $dest | Out-Null }
+$destLong = '\\?\{0}' -f $dest
+
+Write-Host ('Extracting to {0} ...' -f $dest)
+& $sevenZip x $tempZip ('-o' + $destLong) -y | Out-Null
+
+# 7) Normalize folder name (<repo>-<branch> -> Demo2Video-Installer)
+$extracted = Get-ChildItem -Path $dest -Directory | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+if (-not $extracted) {
+  Write-Error ('Extraction failed (no folder found in {0}).' -f $dest)
+  exit 1
+}
+$projectDir = Join-Path $dest 'Demo2Video-Installer'
+if (-not (Test-Path $projectDir)) { New-Item -ItemType Directory -Path $projectDir | Out-Null }
+
+Write-Host 'Finalizing folder layout...'
+& robocopy $extracted.FullName $projectDir /MIR /NFL /NDL /NJH /NJS /NP | Out-Null
+
+# 8) Launch installer (elevated)
+$installer = Join-Path $projectDir 'install.bat'
+if (-not (Test-Path $installer)) {
+  Write-Error ('install.bat not found at {0}' -f $installer)
+  exit 1
+}
+Write-Host 'Launching installer...'
+Start-Process -FilePath 'cmd.exe' -Verb RunAs -ArgumentList @('/c', $installer)
+
+Write-Host 'Bootstrap finished. If the installer did not appear, run it manually as Administrator:'
+Write-Host '  ' $installer
