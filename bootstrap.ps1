@@ -1,149 +1,163 @@
-# Demo2Video Bootstrap (Windows) — simple, fast, ASCII-only
+﻿# bootstrap.ps1 — Download + extract this repo and run install.bat
+# Windows PowerShell 5.1 safe (ASCII only, no smart quotes/backticks)
 
 [CmdletBinding()]
 param(
-  # Default ZIP of your main branch
   [string]$RepoZipUrl = 'https://github.com/m0onmo0n/Demo2Video-Installer/archive/refs/heads/main.zip',
-  # Install destination (keep short to avoid path issues). Override with -DestRoot 'X:\path'
   [string]$DestRoot   = 'C:\d2v',
-  # Optional: install Git for contributors
-  [bool]  $InstallGit = $false
+  [switch]$Force
 )
 
 $ErrorActionPreference = 'Stop'
+
+function Restart-AsAdmin {
+  $isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole(
+    [Security.Principal.WindowsBuiltinRole]::Administrator
+  )
+  if (-not $isAdmin) {
+    $args = @(
+      '-NoProfile','-ExecutionPolicy','Bypass',
+      '-File', $PSCommandPath,
+      '-RepoZipUrl', $RepoZipUrl,
+      '-DestRoot',   $DestRoot
+    )
+    if ($Force) { $args += '-Force' }
+    Start-Process -FilePath 'powershell.exe' -Verb RunAs -ArgumentList $args | Out-Null
+    exit
+  }
+}
+
+function Enable-LongPaths {
+  try {
+    $regPath = 'HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem'
+    $name    = 'LongPathsEnabled'
+    $val = 0
+    try { $val = (Get-ItemProperty -Path $regPath -Name $name -ErrorAction Stop).LongPathsEnabled } catch { }
+    if ($val -ne 1) {
+      New-ItemProperty -Path $regPath -Name $name -PropertyType DWord -Value 1 -Force | Out-Null
+      Write-Host 'Enabled Windows long paths.'
+    } else {
+      Write-Host 'Windows long paths already enabled.'
+    }
+  } catch {
+    Write-Warning 'Could not verify/enable LongPathsEnabled; continuing.'
+  }
+}
+
+function Try-RepairWinget {
+  try {
+    if (Get-Command winget -ErrorAction SilentlyContinue) {
+      winget source list > $null 2>&1
+      if ($LASTEXITCODE -ne 0) {
+        winget source reset --force
+        winget source update
+      }
+      return $true
+    }
+  } catch { }
+  return $false
+}
+
+function Try-Install7Zip {
+  # Returns full path to 7z.exe on success; $null otherwise
+  $sevenZip = Join-Path $env:ProgramFiles '7-Zip\7z.exe'
+  if (Test-Path $sevenZip) { return $sevenZip }
+
+  $wingetOk = Try-RepairWinget
+  if ($wingetOk) {
+    try {
+      Write-Host 'Installing 7-Zip via winget...'
+      $p = Start-Process -FilePath 'winget' -ArgumentList @('install','-e','--id','7zip.7zip','--silent','--accept-source-agreements','--accept-package-agreements') -Wait -PassThru -NoNewWindow
+      if ($p.ExitCode -eq 0 -and (Test-Path $sevenZip)) { return $sevenZip }
+    } catch { }
+  }
+
+  return $null
+}
+
+function Get-Extractor {
+  # Prefer 7-Zip CLI; else tar.exe
+  $sevenZip = Try-Install7Zip
+  if ($sevenZip) {
+    return @{ Tool = '7z'; Path = $sevenZip }
+  }
+  $tar = Get-Command tar.exe -ErrorAction SilentlyContinue
+  if ($tar) {
+    Write-Warning '7-Zip not available; falling back to built-in tar.exe for ZIP extraction.'
+    return @{ Tool = 'tar'; Path = $tar.Source }
+  }
+  throw 'No extractor available (7-Zip missing and tar.exe not found). Install 7-Zip or ensure tar.exe exists.'
+}
+
+function Download-Zip {
+  param([string]$Url,[string]$OutFile)
+  if ([string]::IsNullOrWhiteSpace($Url)) { throw 'RepoZipUrl is empty.' }
+  if (Test-Path $OutFile) {
+    if ($Force) { Remove-Item -Force $OutFile }
+    if (Test-Path $OutFile) { Remove-Item -Force $OutFile }
+  }
+  Write-Host 'Downloading archive...'
+  $p = Start-Process -FilePath 'curl.exe' -ArgumentList @('-L', $Url, '-o', $OutFile) -PassThru -NoNewWindow -Wait
+  if ($p.ExitCode -ne 0) { throw ('curl.exe failed (exit {0})' -f $p.ExitCode) }
+  if (-not (Test-Path $OutFile)) { throw 'Download failed: file not found.' }
+}
+
+function Extract-Zip {
+  param([string]$ZipPath,[string]$Dest,[hashtable]$Extractor)
+  if (-not (Test-Path $Dest)) { New-Item -ItemType Directory -Path $Dest | Out-Null }
+  Write-Host ('Extracting to {0} ...' -f $Dest)
+  if ($Extractor.Tool -eq '7z') {
+    $destLong = '\\?\{0}' -f $Dest
+    & $Extractor.Path 'x' $ZipPath ('-o' + $destLong) '-y' | Out-Null
+  } else {
+    & $Extractor.Path '-xf' $ZipPath '-C' $Dest
+  }
+}
+
+function Finalize-Folder {
+  param([string]$Dest)
+  $extracted = Get-ChildItem -Path $Dest -Directory | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+  if (-not $extracted) { throw 'Extraction failed (no folder found).' }
+  $projectDir = Join-Path $Dest 'Demo2Video-Installer'
+  if (-not (Test-Path $projectDir)) { New-Item -ItemType Directory -Path $projectDir | Out-Null }
+
+  Write-Host 'Finalizing folder layout...'
+  $args = @(
+    ('"{0}"' -f $extracted.FullName),
+    ('"{0}"' -f $projectDir),
+    '/MIR','/NFL','/NDL','/NJH','/NJS','/NP'
+  )
+  $rob = Start-Process -FilePath 'robocopy.exe' -ArgumentList $args -PassThru -WindowStyle Hidden -Wait
+  if ($rob.ExitCode -ge 8) { throw ('robocopy failed (exit {0})' -f $rob.ExitCode) }
+  return $projectDir
+}
+
+function Run-Installer {
+  param([string]$ProjectDir)
+  $installer = Join-Path $ProjectDir 'install.bat'
+  if (-not (Test-Path $installer)) { throw ('install.bat not found at {0}' -f $installer) }
+  Write-Host 'Launching installer...'
+  Start-Process -FilePath 'cmd.exe' -Verb RunAs -ArgumentList '/c', ('"{0}"' -f $installer) | Out-Null
+  Write-Host 'Installer launched. If no window appeared, run install.bat as Administrator.'
+}
+
+# -------------------- Main --------------------
+
+Restart-AsAdmin
 Write-Host '== Demo2Video Bootstrap =='
 
-# 1) Enable NTFS long paths
-try {
-  $lp = Get-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem' -Name LongPathsEnabled -ErrorAction Stop
-  if ($lp.LongPathsEnabled -ne 1) {
-    Write-Host 'Enabling Windows long paths...'
-    New-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem' -Name LongPathsEnabled -PropertyType DWord -Value 1 -Force | Out-Null
-  } else {
-    Write-Host 'Windows long paths already enabled.'
-  }
-} catch {
-  Write-Warning 'Could not verify/enable LongPathsEnabled; continuing.'
-}
+Enable-LongPaths
 
-# 2) Require winget
-if (-not (Get-Command winget -ErrorAction SilentlyContinue)) {
-  Write-Error "winget not found. Install 'App Installer' from the Microsoft Store, then rerun."
-  exit 1
-}
-
-# 3) Ensure 7-Zip CLI
-$sevenZip = Join-Path $env:ProgramFiles '7-Zip\7z.exe'
-if (-not (Test-Path $sevenZip)) {
-  $sevenZipX86 = Join-Path ${env:ProgramFiles(x86)} '7-Zip\7z.exe'
-  if (Test-Path $sevenZipX86) { $sevenZip = $sevenZipX86 }
-}
-if (-not (Test-Path $sevenZip)) {
-  Write-Host 'Installing 7-Zip...'
-  winget install -e --id 7zip.7zip --silent --accept-source-agreements --accept-package-agreements
-}
-if (-not (Test-Path $sevenZip)) {
-  Write-Error '7-Zip not found after install.'
-  exit 1
-}
-
-# 4) Optional: Git for contributors (and long paths in Git)
-if ($InstallGit -and -not (Get-Command git -ErrorAction SilentlyContinue)) {
-  Write-Host 'Installing Git...'
-  winget install -e --id Git.Git --silent --accept-source-agreements --accept-package-agreements
-  try { git config --system core.longpaths true | Out-Null } catch {}
-}
-
-# 5) Fast ZIP download (codeload + curl, with fallbacks)
-$ts = Get-Date -Format 'yyyyMMdd_HHmmss'
-$tempZip = Join-Path $env:TEMP ('demo2video_' + $ts + '.zip')
-
-# Rewrite GitHub archive URL to codeload for speed
-if ($RepoZipUrl -match '^https://github\.com/([^/]+)/([^/]+)/archive/refs/heads/([^/]+)\.zip$') {
-  $owner  = $Matches[1]
-  $repo   = $Matches[2]
-  $branch = $Matches[3]
-  $RepoZipUrl = 'https://codeload.github.com/{0}/{1}/zip/refs/heads/{2}' -f $owner, $repo, $branch
-}
-
-Write-Host 'Downloading archive from:'
-Write-Host '  ' $RepoZipUrl
-
-$ok = $false
-
-# Try curl.exe first
-$curl = Get-Command curl.exe -ErrorAction SilentlyContinue
-if ($curl) {
-  $proc = Start-Process -FilePath $curl.Source -ArgumentList @('-L', $RepoZipUrl, '-o', $tempZip, '--retry', '3', '--retry-delay', '2') -PassThru -NoNewWindow
-  $null = $proc.WaitForExit()
-  if (Test-Path $tempZip) {
-    $fi = Get-Item $tempZip
-    if ($fi.Length -gt 0) { $ok = $true }
-  }
-}
-
-# Fall back to Invoke-WebRequest
-if (-not $ok) {
-  try {
-    $old = $global:ProgressPreference
-    $global:ProgressPreference = 'SilentlyContinue'
-    Invoke-WebRequest -Uri $RepoZipUrl -OutFile $tempZip -MaximumRedirection 5 -TimeoutSec 300
-    $global:ProgressPreference = $old
-    if (Test-Path $tempZip) {
-      $fi = Get-Item $tempZip
-      if ($fi.Length -gt 0) { $ok = $true }
-    }
-  } catch {
-    $ok = $false
-  }
-}
-
-# Fall back to BITS
-if (-not $ok) {
-  try {
-    Start-BitsTransfer -Source $RepoZipUrl -Destination $tempZip -TransferPolicy AlwaysForeground -ErrorAction Stop
-    if (Test-Path $tempZip) {
-      $fi = Get-Item $tempZip
-      if ($fi.Length -gt 0) { $ok = $true }
-    }
-  } catch {
-    $ok = $false
-  }
-}
-
-if (-not $ok) {
-  Write-Error ('Failed to download ZIP from {0}' -f $RepoZipUrl)
-  exit 1
-}
-
-# 6) Extract to a short path (use \\?\ to help long paths)
 $dest = $DestRoot.TrimEnd('\')
-if (-not (Test-Path $dest)) { New-Item -ItemType Directory -Path $dest | Out-Null }
-$destLong = '\\?\{0}' -f $dest
-
-Write-Host ('Extracting to {0} ...' -f $dest)
-& $sevenZip x $tempZip ('-o' + $destLong) -y | Out-Null
-
-# 7) Normalize folder name (<repo>-<branch> -> Demo2Video-Installer)
-$extracted = Get-ChildItem -Path $dest -Directory | Sort-Object LastWriteTime -Descending | Select-Object -First 1
-if (-not $extracted) {
-  Write-Error ('Extraction failed (no folder found in {0}).' -f $dest)
-  exit 1
+if (-not (Test-Path $dest)) {
+  New-Item -ItemType Directory -Path $dest | Out-Null
 }
-$projectDir = Join-Path $dest 'Demo2Video-Installer'
-if (-not (Test-Path $projectDir)) { New-Item -ItemType Directory -Path $projectDir | Out-Null }
 
-Write-Host 'Finalizing folder layout...'
-& robocopy $extracted.FullName $projectDir /MIR /NFL /NDL /NJH /NJS /NP | Out-Null
+$tempZip = Join-Path $env:TEMP 'demo2video.zip'
+$extractor = Get-Extractor
+Download-Zip -Url $RepoZipUrl -OutFile $tempZip
+Extract-Zip  -ZipPath $tempZip -Dest $dest -Extractor $extractor
+$proj = Finalize-Folder -Dest $dest
+Run-Installer -ProjectDir $proj
 
-# 8) Launch installer (elevated)
-$installer = Join-Path $projectDir 'install.bat'
-if (-not (Test-Path $installer)) {
-  Write-Error ('install.bat not found at {0}' -f $installer)
-  exit 1
-}
-Write-Host 'Launching installer...'
-Start-Process -FilePath 'cmd.exe' -Verb RunAs -ArgumentList @('/c', $installer)
-
-Write-Host 'Bootstrap finished. If the installer did not appear, run it manually as Administrator:'
-Write-Host '  ' $installer
+Write-Host 'Done.'

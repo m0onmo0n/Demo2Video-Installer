@@ -1,123 +1,182 @@
-# install-deps.ps1 (ASCII-safe)
-# Installs: NVM (or Node LTS), OBS, Python 3.13, PostgreSQL, and Visual Studio 2022 (or Build Tools) with C++ workload.
-
+﻿# install-deps.ps1 — unified dependency installer (Windows, ASCII-only)
+[CmdletBinding()]
 param(
-    [ValidateSet('Community','Professional','Enterprise','BuildTools')]
-    [string]$VsEdition = 'Community',
-    [switch]$LeanCpp = $false
+  [switch]$InstallPgAdmin  # add -InstallPgAdmin to also install pgAdmin
 )
 
 $ErrorActionPreference = 'Stop'
 
 function Ensure-Admin {
-    $id = [Security.Principal.WindowsIdentity]::GetCurrent()
-    $p  = New-Object Security.Principal.WindowsPrincipal($id)
-    if (-not $p.IsInRole([Security.Principal.WindowsBuiltinRole]::Administrator)) {
-        Write-Warning "This script should be run as Administrator (winget installers often require elevation)."
-    }
+  $isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltinRole]::Administrator)
+  if (-not $isAdmin) { throw 'Run this script as Administrator.' }
 }
-Ensure-Admin
 
 function Ensure-Winget {
-    if (-not (Get-Command winget -ErrorAction SilentlyContinue)) {
-        throw "winget not found. Install the Microsoft Store 'App Installer' package, then re-run."
-    }
+  if (-not (Get-Command winget -ErrorAction SilentlyContinue)) {
+    throw "winget not found. Install 'App Installer' from the Microsoft Store, then rerun."
+  }
 }
+
+function Test-PackageInstalled {
+  param([string]$Id)
+  $out = & winget list -e --id $Id 2>$null
+  if ($LASTEXITCODE -eq 0 -and $out) { return $true } else { return $false }
+}
+
+function Install-Winget {
+  param(
+    [string]$Id,
+    [string]$Name,
+    [string]$Override = $null
+  )
+  if (Test-PackageInstalled -Id $Id) {
+    Write-Host ("Already installed: {0}" -f $Id)
+    return
+  }
+  Write-Host ("Installing {0} ..." -f $Name)
+  $args = @('install','-e','--id',$Id,'--accept-source-agreements','--accept-package-agreements','--silent')
+  if ($Override) { $args += @('--override', $Override) }
+  & winget @args
+  if ($LASTEXITCODE -ne 0) { throw ("winget failed installing {0} (exit {1})" -f $Name, $LASTEXITCODE) }
+}
+
+function Get-VSWherePath {
+  $candidates = @(
+    "$Env:ProgramFiles(x86)\Microsoft Visual Studio\Installer\vswhere.exe",
+    "$Env:ProgramFiles\Microsoft Visual Studio\Installer\vswhere.exe"
+  )
+  foreach ($p in $candidates) {
+    if (Test-Path $p) { return $p }
+  }
+  return $null
+}
+
+function Test-VSHasVCTools {
+  # True if ANY VS 2022 install has the C++ workload
+  $vswhere = Get-VSWherePath
+  if (-not $vswhere) { return $false }
+  try {
+    $json = & $vswhere -products * -requires Microsoft.VisualStudio.Workload.VCTools -version '[17.0,18.0)' -format json 2>$null
+    if ($LASTEXITCODE -ne 0 -or -not $json) { return $false }
+    $items = $json | ConvertFrom-Json
+    if ($items -and $items.Count -ge 1) { return $true } else { return $false }
+  } catch {
+    return $false
+  }
+}
+
+# ---------------------------------------------------------------------------
+
+Ensure-Admin
 Ensure-Winget
 
-function Test-PackageInstalled([string]$Id) {
-    $null = winget list --id $Id --accept-source-agreements 2>$null
-    return ($LASTEXITCODE -eq 0)
-}
+# If sources are broken, try to repair
+try {
+  winget source list > $null 2>&1
+  if ($LASTEXITCODE -ne 0) {
+    winget source reset --force
+    winget source update
+  }
+} catch { }
 
-function Install-Package([string]$Id, [string]$Notes = "", [string]$Override = "") {
-    $args = @(
-        'install','--id',$Id,
-        '--silent',
-        '--accept-source-agreements',
-        '--accept-package-agreements'
-    )
-    if ($Override) { $args += @('--override', $Override) }
+Write-Host '=== Installing prerequisites ==='
 
-    try {
-        Write-Host "Installing $Id $Notes"
-        winget @args
-        if ($LASTEXITCODE -eq 0) {
-            return [pscustomobject]@{ Id = $Id; Status = 'Installed'; Notes = $Notes }
-        } else {
-            return [pscustomobject]@{ Id = $Id; Status = "Failed ($LASTEXITCODE)"; Notes = $Notes }
-        }
+# Python 3.13 + Python Launcher (py.exe in C:\Windows)
+Install-Winget -Id 'Python.Python.3.13' -Name 'Python 3.13'
+Install-Winget -Id 'Python.Launcher'    -Name 'Python Launcher (py.exe)'
+
+# NVM for Windows
+Install-Winget -Id 'CoreyButler.NVMforWindows' -Name 'NVM for Windows'
+
+# If Node not present and NVM missing (rare), install Node LTS as a backup
+try {
+  $haveNode = (Get-Command node -ErrorAction SilentlyContinue) -ne $null
+  $haveNvm  = (Get-Command nvm  -ErrorAction SilentlyContinue) -ne $null
+  if (-not $haveNode -and -not $haveNvm) {
+    Install-Winget -Id 'OpenJS.NodeJS.LTS' -Name 'Node.js LTS'
+  }
+} catch { }
+
+# OBS Studio
+Install-Winget -Id 'OBSProject.OBSStudio' -Name 'OBS Studio'
+
+# PostgreSQL (prefer 17, then fall back)
+$pgIds = @(
+  'PostgreSQL.PostgreSQL.17',
+  'PostgreSQL.PostgreSQL16',
+  'PostgreSQL.PostgreSQL15',
+  'PostgreSQL.PostgreSQL',
+  'EDB.PostgreSQL'
+)
+$pgInstalled = $false
+foreach ($pgId in $pgIds) {
+  try {
+    $out = winget show -e --id $pgId 2>$null
+    if ($LASTEXITCODE -eq 0 -and $out) {
+      Install-Winget -Id $pgId -Name ("PostgreSQL ({0})" -f $pgId)
+      $pgInstalled = $true
+      break
     }
-    catch {
-        return [pscustomobject]@{ Id = $Id; Status = 'Error'; Notes = "$Notes :: $($_.Exception.Message)" }
+  } catch { }
+}
+if (-not $pgInstalled) {
+  Write-Warning 'PostgreSQL package not found in winget sources. You can:'
+  Write-Warning ' - Run: winget source reset --force; winget source update; winget search PostgreSQL'
+  Write-Warning ' - Or install PostgreSQL manually and rerun install.bat'
+}
+
+# Optional: pgAdmin
+if ($InstallPgAdmin) {
+  try {
+    $pgAdminId = 'PostgreSQL.pgAdmin'
+    $out = winget show -e --id $pgAdminId 2>$null
+    if ($LASTEXITCODE -eq 0 -and $out) {
+      Install-Winget -Id $pgAdminId -Name 'pgAdmin'
+    } else {
+      Write-Warning 'pgAdmin package not found in winget sources.'
     }
+  } catch {
+    Write-Warning ("pgAdmin installation attempt failed: {0}" -f $_.Exception.Message)
+  }
 }
 
-# Resolve VS package and workload
-$vsId = switch ($VsEdition) {
-    'Community'     { 'Microsoft.VisualStudio.2022.Community' }
-    'Professional'  { 'Microsoft.VisualStudio.2022.Professional' }
-    'Enterprise'    { 'Microsoft.VisualStudio.2022.Enterprise' }
-    'BuildTools'    { 'Microsoft.VisualStudio.2022.BuildTools' }
-}
-
-$vsCppWorkload = if ($VsEdition -eq 'BuildTools') {
-    'Microsoft.VisualStudio.Workload.VCTools'
+# Visual Studio 2022 Build Tools (C++ workload)
+if (Test-VSHasVCTools) {
+  Write-Host 'Visual Studio 2022 with C++ workload already present — skipping install.'
 } else {
-    'Microsoft.VisualStudio.Workload.NativeDesktop'
+  $vsId = 'Microsoft.VisualStudio.2022.BuildTools'
+  $vsOverride = '--add Microsoft.VisualStudio.Workload.VCTools --includeRecommended --passive --norestart'
+  Install-Winget -Id $vsId -Name 'VS 2022 Build Tools (C++)' -Override $vsOverride
 }
 
-$vsSizeFlags = if ($LeanCpp) { '' } else { '--includeRecommended --includeOptional' }
+Write-Host ''
+Write-Host '=== Verifications ==='
 
-$vsOverrideParts = @('--passive','--wait','--norestart','--add', $vsCppWorkload)
-if ($vsSizeFlags) { $vsOverrideParts += $vsSizeFlags }
-$vsOverrideString = ($vsOverrideParts -join ' ')
-
-# Package list
-$packages = [ordered]@{
-    'CoreyButler.NVMforWindows' = @{ when = { $true }; notes = 'NVM for Windows'; override = '' }
-    'OpenJS.NodeJS.LTS'         = @{ when = { -not (Test-PackageInstalled 'CoreyButler.NVMforWindows') }; notes = 'Node LTS (skipped if NVM present)'; override = '' }
-    'OBSProject.OBSStudio'      = @{ when = { $true }; notes = 'OBS Studio'; override = '' }
-    'Python.Python.3.13'        = @{ when = { $true }; notes = 'Python 3.13'; override = '' }
-    'PostgreSQL.PostgreSQL'     = @{ when = { $true }; notes = 'PostgreSQL Server'; override = '' }
-    $vsId                       = @{ when = { $true }; notes = "Visual Studio 2022 ($VsEdition) with C++ workload"; override = $vsOverrideString }
+# Python
+try {
+  $pyv = & py -3 --version 2>$null
+  if (-not $pyv) { $pyv = & python --version 2>$null }
+  if ($pyv) { Write-Host ("Python: {0}" -f $pyv) } else { Write-Warning 'Python not on PATH yet.' }
+} catch {
+  Write-Warning 'Python not detected on PATH.'
 }
 
-$results = New-Object System.Collections.Generic.List[object]
-
-foreach ($kv in $packages.GetEnumerator()) {
-    $id   = $kv.Key
-    $meta = $kv.Value
-    $ok   = & $meta.when
-
-    if (-not $ok) {
-        $results.Add([pscustomobject]@{ Id = $id; Status = 'Skipped (condition false)'; Notes = $meta.notes })
-        continue
-    }
-
-    if (Test-PackageInstalled $id) {
-        Write-Host "Already installed: $id"
-        $results.Add([pscustomobject]@{ Id = $id; Status = 'Already installed'; Notes = $meta.notes })
-        continue
-    }
-
-    $res = Install-Package -Id $id -Notes $meta.notes -Override $meta.override
-    $results.Add($res)
+# Node
+try {
+  $nv = & node --version 2>$null
+  if ($nv) { Write-Host ("Node: {0}" -f $nv) } else { Write-Warning 'Node not on PATH yet.' }
+} catch {
+  Write-Warning 'Node not detected on PATH.'
 }
 
-Write-Host ""
-Write-Host "=== Installation Summary ==="
-$results | Format-Table -AutoSize
-
-Write-Host ""
-Write-Host "Next steps:"
-if (Test-PackageInstalled 'CoreyButler.NVMforWindows') {
-    Write-Host " - Open a new terminal, then:"
-    Write-Host "     nvm list available"
-    Write-Host "     nvm install lts"
-    Write-Host "     nvm use lts"
-    Write-Host "     node -v  &&  npm -v"
+# OBS WebSocket (built-in since OBS 28)
+$obsDll = Join-Path ${env:ProgramFiles} 'obs-studio\obs-plugins\64bit\obs-websocket.dll'
+if (Test-Path $obsDll) {
+  Write-Host 'OBS WebSocket detected (Tools -> WebSocket Server Settings, default port 4455).'
+} else {
+  Write-Warning 'OBS installed, but WebSocket DLL not found yet. After first launch, check Tools -> WebSocket.'
 }
-Write-Host " - Python pip check:  python -m pip --version"
-Write-Host " - PostgreSQL: verify service is running and set credentials if needed."
-Write-Host " - If Visual Studio requested a reboot, do that before first launch."
+
+Write-Host ''
+Write-Host 'All prerequisite installations attempted.'
+exit 0
