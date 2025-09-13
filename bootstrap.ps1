@@ -1,4 +1,4 @@
-﻿# bootstrap.ps1 — Download + extract this repo and run install.bat
+# bootstrap.ps1 — Download + extract this repo and run install.bat
 # Windows PowerShell 5.1 safe (ASCII only)
 
 [CmdletBinding()]
@@ -166,11 +166,16 @@ $extractor = Get-Extractor
 Download-Zip -Url $RepoZipUrl -OutFile $tempZip
 Extract-Zip  -ZipPath $tempZip -Dest $dest -Extractor $extractor
 
-# Build a param set and only add switches when true (avoids -Keep:$var parsing quirks)
-$finalizeParams = @{ Dest = $dest }
-if ($KeepExtracted) { $finalizeParams.Keep = $true }
-if ($Force)         { $finalizeParams.ForceExisting = $true }
-$proj = Finalize-Folder @finalizeParams
+# EXPLICIT BRANCHES (no splatting, no boolean switch passing)
+if ($KeepExtracted -and $Force) {
+  $proj = Finalize-Folder -Dest $dest -Keep -ForceExisting
+} elseif ($KeepExtracted) {
+  $proj = Finalize-Folder -Dest $dest -Keep
+} elseif ($Force) {
+  $proj = Finalize-Folder -Dest $dest -ForceExisting
+} else {
+  $proj = Finalize-Folder -Dest $dest
+}
 
 if (Test-Path $tempZip) { try { Remove-Item -Force $tempZip } catch { } }
 
