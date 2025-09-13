@@ -19,18 +19,14 @@ Before you begin, you must manually install the following programs:
 
 ### Step 2: Download and Install This Project
 
-1.  Run this in **PowerShell** (it will ask for Admin to install prerequisites):
+1.  copy and paste this in **PowerShell** (it will ask for Admin to install prerequisites):
 
-```powershell
-irm https://raw.githubusercontent.com/m0onmo0n/Demo2Video-Installer/main/bootstrap.ps1 | iex
-
-```
-alternative 1 line command in and elevated **PowerShell**
 ```powershell
 Start-Process powershell -Verb RunAs -ArgumentList @(
   '-NoExit','-NoProfile','-ExecutionPolicy','Bypass',
-  '-Command','irm https://raw.githubusercontent.com/m0onmo0n/Demo2Video-Installer/main/bootstrap.ps1 | iex'
+  '-Command', '$u="https://raw.githubusercontent.com/m0onmo0n/Demo2Video-Installer/main/bootstrap.ps1"; $p=Join-Path $env:TEMP "d2v_bootstrap.ps1"; iwr $u -OutFile $p; & $p'
 )
+
 ```
 What it does:
 
