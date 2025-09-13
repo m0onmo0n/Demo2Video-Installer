@@ -1,4 +1,4 @@
-﻿# bootstrap.ps1 — Download + extract this repo and run install.bat
+# bootstrap.ps1 — Download + extract this repo and run install.bat
 # Windows PowerShell 5.1 safe (ASCII only)
 
 [CmdletBinding()]
@@ -161,7 +161,24 @@ $tempZip = Join-Path $env:TEMP 'demo2video.zip'
 $extractor = Get-Extractor
 Download-Zip -Url $RepoZipUrl -OutFile $tempZip
 Extract-Zip  -ZipPath $tempZip -Dest $dest -Extractor $extractor
+<<<<<<< HEAD
 $proj = Finalize-Folder -Dest $dest
+=======
+
+# EXPLICIT BRANCHES (no splatting, no boolean switch passing)
+if ($KeepExtracted -and $Force) {
+  $proj = Finalize-Folder -Dest $dest -Keep -ForceExisting
+} elseif ($KeepExtracted) {
+  $proj = Finalize-Folder -Dest $dest -Keep
+} elseif ($Force) {
+  $proj = Finalize-Folder -Dest $dest -ForceExisting
+} else {
+  $proj = Finalize-Folder -Dest $dest
+}
+
+if (Test-Path $tempZip) { try { Remove-Item -Force $tempZip } catch { } }
+
+>>>>>>> 61652abded46a11a7fbb8fcdf527ad19b900ee57
 Run-Installer -ProjectDir $proj
 
 Write-Host 'Done.'
