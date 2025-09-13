@@ -22,7 +22,7 @@ Before you begin, you must manually install the following programs:
 1.  Run this in **PowerShell** (it will ask for Admin to install prerequisites):
 
 ```powershell
-irm https://raw.githubusercontent.com/<you>/<repo>/main/bootstrap.ps1 | iex
+irm https://raw.githubusercontent.com/m0onmo0n/Demo2Video-Installer/main/bootstrap.ps1 | iex
 
 ```
 
