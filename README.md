@@ -8,6 +8,9 @@ This project uses the command-line tools provided by the official **CS Demo Mana
 
 This guide is designed to be as user-friendly as possible.
 
+
+### Quick start (Windows)
+
 ### Step 1: Install Required Software
 
 Before you begin, you must manually install the following programs:
@@ -16,11 +19,32 @@ Before you begin, you must manually install the following programs:
 
 ### Step 2: Download and Install This Project
 
-1.  **Download**: Download this project as a ZIP file and extract it to a permanent location on your computer (e.g., `C:\CS-Demo-Processor`). Alternatively you can git clone the project
+1.  Run this in **PowerShell** (it will ask for Admin to install prerequisites):
+
+```powershell
+irm https://raw.githubusercontent.com/<you>/<repo>/main/bootstrap.ps1 | iex
+
+```
+
+What it does:
+
+* Enables Windows long paths
+
+* Installs 7-Zip CLI
+
+* Downloads and extracts the project to C:\d2v
+
+* Launches install.bat
+
+If you prefer Git:
+
+1. Install Git: winget install -e --id Git.Git
+
+2. git config --system core.longpaths true
+
+3. git clone https://github.com/<you>/<repo>.git C:\src\d2v
 2.  **Run the Installer**: From the main project folder, double-click the `install.bat` file. This will automatically:
-    install the needed software and check them
-    * **Check for Python and Node.js**: If they are not installed or not in your system's PATH, the script will stop and provide you with a download link.
-    * **Install all dependencies** for this project.
+    * **install the needed software, check Python and Node.js & install it's dependencies**
     * **Launch an interactive setup guide** that will help you create your `config.ini` file.
 
 ### Step 3: Authorize YouTube
@@ -36,3 +60,7 @@ After the installer finishes, you need to authorize the application with Google.
 1.  **Run the Launcher**: From the main project folder, double-click the `run.bat` file.
 
 This will automatically start the necessary background processes and open the web interface in your default browser at `http://localhost:5001`.
+
+
+
+
