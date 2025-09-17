@@ -1,3 +1,6 @@
+> [!IMPORTANT]
+> EVERYTHING is currently broken cuz valve
+
 # CS Demo Processor
 
 Automates the workflow of downloading a Counter-Strike 2 demo, analyzing it, recording highlights of a specified player, and uploading the result to YouTube. It runs a local web UI so you can queue jobs and let it churn in the background.
